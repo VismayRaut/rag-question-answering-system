@@ -1,0 +1,24 @@
+# ── RAG System Dependencies ──────────────────────────────────────────────────
+# Core API framework
+fastapi==0.115.0
+uvicorn[standard]==0.30.0
+python-multipart==0.0.9
+
+# Pydantic for validation and settings
+pydantic
+pydantic-settings
+
+# Embedding model
+sentence-transformers==3.0.0
+
+# Vector search
+faiss-cpu
+
+# PDF parsing
+pdfplumber
+
+# Numerical computation
+numpy==1.26.4
+
+# Optional: OpenAI LLM provider (uncomment if using OpenAI)
+# openai==1.40.0
