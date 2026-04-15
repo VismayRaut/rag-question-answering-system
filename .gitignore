@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual Environment
+venv/
+.venv/
+env/
+
+# Environment variables (keep .env.example, ignore actual .env)
+.env
+
+# FAISS index files (auto-generated, no need to commit)
+vector_store/faiss.index
+vector_store/faiss_meta.json
+
+# Uploaded files (user data, not source code)
+uploads/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
