@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>RAG System — Technical Explanation</title>
+  <style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 24px; color: #222; line-height: 1.7; background: #f9f9f9; }
+    h1 { color: #1a237e; border-bottom: 3px solid #1a237e; padding-bottom: 10px; }
+    h2 { color: #283593; margin-top: 40px; border-left: 5px solid #3f51b5; padding-left: 12px; }
+    h3 { color: #3949ab; }
+    code { background: #e8eaf6; padding: 2px 6px; border-radius: 4px; font-family: 'Courier New', monospace; font-size: 0.93em; }
+    pre { background: #1e1e2e; color: #cdd6f4; padding: 18px; border-radius: 8px; overflow-x: auto; font-size: 0.92em; line-height: 1.6; }
+    pre code { background: none; color: inherit; padding: 0; }
+    table { border-collapse: collapse; width: 100%; margin: 20px 0; }
+    th { background: #3f51b5; color: white; padding: 10px 14px; text-align: left; }
+    td { padding: 9px 14px; border-bottom: 1px solid #ddd; }
+    tr:nth-child(even) { background: #f0f0ff; }
+    .meta { background: #e8eaf6; border-radius: 8px; padding: 14px 20px; margin-bottom: 30px; }
+    .meta p { margin: 4px 0; }
+    blockquote { background: #fff3e0; border-left: 5px solid #ff9800; margin: 16px 0; padding: 10px 18px; border-radius: 0 8px 8px 0; }
+    .tag { display: inline-block; background: #3f51b5; color: white; padding: 2px 10px; border-radius: 12px; font-size: 0.85em; margin-right: 6px; }
+  </style>
+</head>
+<body>
+
+<h1>RAG System — Technical Explanation Document</h1>
+
+<div class="meta">
+  <p><strong>Project:</strong> RAG-Based Question Answering System</p>
+  <p><strong>Author:</strong> Vismay Raut</p>
+  <p><strong>Institution:</strong> MIT ADT University</p>
+  <p><strong>GitHub:</strong> <a href="https://github.com/VismayRaut/rag-question-answering-system" target="_blank">github.com/VismayRaut/rag-question-answering-system</a></p>
+</div>
+
+<h2>1. Why We Chose a Chunk Size of 400 Tokens</h2>
+
+<h3>Decision</h3>
+<p>Each document is split into chunks of <strong>400 whitespace tokens</strong> with an <strong>overlap of 80 tokens (20%)</strong>.</p>
+
+<h3>Reasoning</h3>
+
+<table>
+  <tr><th>Chunk Size</th><th>Problem</th></tr>
+  <tr><td>&lt; 100 tokens (too small)</td><td>Too little context. Embeddings represent partial thoughts. Poor retrieval quality.</td></tr>
+  <tr><td>&gt; 800 tokens (too large)</td><td>Blends unrelated topics into one embedding. Diluted vectors. Retrieval precision drops. Model truncates internally.</td></tr>
+  <tr><td>400 tokens ✅ (our choice)</td><td>~1–2 focused paragraphs. Captures one coherent idea. Within effective range of all-MiniLM-L6-v2. Best balance of precision and context.</td></tr>
+</table>
+
+<h3>Why 80 Tokens of Overlap?</h3>
+<p>When we split text at a fixed boundary, important sentences can be cut in half. With <strong>80 tokens of overlap (20%)</strong>, the sliding window ensures that any sentence spanning a boundary is fully captured in at least one chunk. This prevents information loss at chunk edges without duplicating too much content.</p>
+
+<h2>2. One Retrieval Failure Case Observed</h2>
+
+<h3>Scenario</h3>
+<p><strong>Query asked:</strong> <em>"What is the recipe for chocolate cake?"</em></p>
+<p><strong>Documents uploaded:</strong> Only a technical resume PDF (education, skills, work experience)</p>
+
+<h3>What Happened</h3>
+<p>The FAISS similarity search returned 5 chunks, but all had very low cosine similarity scores:</p>
+<pre><code>scores = [0.12, 0.09, 0.08, 0.07, 0.05]</code></pre>
+<p>None of the chunks scored above the minimum threshold of <strong>0.3</strong>.</p>
+
+<h3>System Log (Actual Warning Generated)</h3>
+<pre><code>WARNING | services.retrieval | RETRIEVAL FAILURE: All 5 chunks scored below 
+threshold (0.3) for query: 'What is the recipe for chocolate cake?'. 
+Scores were: [0.12, 0.09, 0.08, 0.07, 0.05]. 
+Returning fallback 'I don't know' response.</code></pre>
+
+<h3>Root Cause</h3>
+<p>The query embedding (representing food/cooking) had very low cosine similarity with all resume chunk embeddings (representing career/technology). The question was semantically unrelated to any content in the indexed documents.</p>
+
+<h3>How Our System Handled It</h3>
+<p>Instead of passing irrelevant chunks to the LLM — which might cause hallucination — our system:</p>
+<ol>
+  <li>Detected that ALL scores were below <code>MIN_SIMILARITY_THRESHOLD = 0.3</code></li>
+  <li>Skipped the LLM call entirely</li>
+  <li>Returned a deterministic safe response:</li>
+</ol>
+<pre><code>{
+  "answer": "I don't know based on the provided documents. The retrieved 
+             content did not contain information relevant to your question.",
+  "retrieved_chunks": [],
+  "similarity_scores": []
+}</code></pre>
+
+<blockquote>
+  <strong>Lesson Learned:</strong> A static threshold of 0.3 works well for clearly on-topic vs. off-topic queries. A future improvement would be a <em>relative threshold</em> (e.g., drop chunks scoring less than 50% of the top score) for handling ambiguous retrievals more gracefully.
+</blockquote>
+
+<h2>3. One Metric Tracked — Query Latency</h2>
+
+<h3>What We Tracked</h3>
+<p>We tracked <strong>Query Latency in milliseconds</strong>, broken into two phases:</p>
+<ul>
+  <li><code>retrieval_latency_ms</code> — time to embed query + FAISS vector search</li>
+  <li><code>total_latency_ms</code> — end-to-end time including LLM generation</li>
+</ul>
+
+<h3>Real Observed Values (from actual system run)</h3>
+<pre><code>question              : "What are the technical skills of this person?"
+retrieval_latency_ms  : 15.4 ms
+total_latency_ms      : 16.7 ms
+chunks_returned       : 3
+similarity_scores     : [0.3808, 0.3372, 0.3372]</code></pre>
+
+<h3>Where It Is Tracked</h3>
+<p>In <code>routes/query.py</code> — the entire pipeline is timed and logged on every request:</p>
+<pre><code>logger.info(
+    f"QUERY METRICS | question='{body.question[:80]}' | "
+    f"retrieval_latency={retrieval_latency_ms:.1f}ms | "
+    f"total_latency={total_latency_ms:.1f}ms | "
+    f"chunks_returned={len(retrieved_chunks)} | "
+    f"scores={[round(s, 4) for s in scores]}"
+)</code></pre>
+
+<p>The metric is also returned to the client in every API response:</p>
+<pre><code>{
+  "latency_ms": 16.71,
+  "similarity_scores": [0.3808, 0.3372, 0.3372]
+}</code></pre>
+
+<h3>Why This Metric Matters</h3>
+<table>
+  <tr><th>Reason</th><th>Explanation</th></tr>
+  <tr><td>Bottleneck detection</td><td>If retrieval latency spikes, FAISS index is too large for brute-force → switch to approximate indexing (HNSW)</td></tr>
+  <tr><td>LLM overhead</td><td>total_latency − retrieval_latency = LLM time. If this dominates, consider a faster model or caching.</td></tr>
+  <tr><td>SLA monitoring</td><td>Our system achieves ~17ms retrieval — well under any 500ms production SLA</td></tr>
+  <tr><td>Retrieval transparency</td><td>Similarity scores returned to client show whether chunks were highly relevant (near 1.0) or marginal (near 0.3)</td></tr>
+</table>
+
+</body>
+</html>
